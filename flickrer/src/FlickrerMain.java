@@ -15,24 +15,32 @@ import java.util.TreeMap;
 
 class MessageCreator{
     String oauthTokenSecret = "";
-    String url;
+    static String request_token_url = "http://www.flickr.com/services/oauth/request_token";
+    static String access_token_url = "http://www.flickr.com/services/oauth/access_token";
+    static String authorize_url = "http://www.flickr.com/services/oauth/authorize";
+    static String rest_url = "http://api.flickr.com/services/rest";
+
     TreeMap <String, String> arguments = new TreeMap<String, String>();
 
-    public MessageCreator(String url_string){
-        url=url_string;
-    }
     public MessageCreator withArg(String arg, String val){
         arguments.put(arg, val);
         return this;
     }
 
     public String getEncodedMess(){
-        String strUrl=url;
+        String strUrl= request_token_url;
         String startsArgs = argsToString();
         if (oauthTokenSecret.length()>0){  //Exchanging the Request Token for an Access Token - need new signature
             startsArgs = delParamFromArgsString(argsToString(), "oauth_callback");
+
             startsArgs = delParamFromArgsString(startsArgs,"oauth_signature");
-            strUrl= "http://www.flickr.com/services/oauth/access_token";
+            strUrl= access_token_url;
+
+            if (arguments.containsKey("nojsoncallback")) {
+                startsArgs = delParamFromArgsString(startsArgs,"oauth_verifier");
+                strUrl = rest_url;
+            }
+
         }
 
         String res = null;
@@ -41,7 +49,6 @@ class MessageCreator{
         } catch (UnsupportedEncodingException e) {
             e.toString();
         }
-        System.out.println("enc: "+res);
         return res;
 
     }
@@ -58,8 +65,6 @@ class MessageCreator{
     }
 
     private String requestGET(String address) {
-        System.out.println("address:"+address);
-
         String result="";
         try {
             URL url = new URL(address);
@@ -70,7 +75,6 @@ class MessageCreator{
             conn.connect();
 
             int code=conn.getResponseCode();
-            System.out.println("code="+code);
             if (code==200) {
                 BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
 
@@ -83,6 +87,7 @@ class MessageCreator{
             }
 
             conn.disconnect();
+            if (code != 200) return ""+code;
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -90,14 +95,14 @@ class MessageCreator{
     }
 
    public String getRequestToken(){
-       String address = url+"?"+argsToString();
+       String address = request_token_url +"?"+argsToString();
        String result = requestGET(address);
        fillOAuthTokens(result);
        return result;
    }
 
    public void getUserAuthorization(){
-       String address = "http://www.flickr.com/services/oauth/authorize?oauth_token="+arguments.get("oauth_token");
+       String address = authorize_url + "?oauth_token="+arguments.get("oauth_token");
 
        try {
            java.awt.Desktop.getDesktop().browse(java.net.URI.create(address));
@@ -111,22 +116,33 @@ class MessageCreator{
                return mas[0]+mas[1].substring(1);
        return mas[0];
    }
-   public void getRequestTokenForAnAccessToken(){
-       String address = "http://www.flickr.com/services/oauth/access_token?"+
+   public String getRequestTokenForAnAccessToken(){
+       String address = access_token_url+"?"+
                delParamFromArgsString(argsToString(), "oauth_callback");
        String result = requestGET(address);
-       System.out.println(result);
+       fillOAuthTokens(result);
+       return result;
    }
 
    private void fillOAuthTokens(String req){
         String [] params = req.split("&");
-        if ("oauth_callback_confirmed=true".equals(params[0])){
-            withArg("oauth_token", params[1].split("=")[1]);
-            oauthTokenSecret = params[2].split("=")[1];
+        for (String par_name:params){
+            if (par_name.startsWith("oauth_token="))
+                withArg("oauth_token", par_name.split("=")[1]);
+            if (par_name.startsWith("oauth_token_secret"))
+                oauthTokenSecret = par_name.split("=")[1];
+//        if ("oauth_callback_confirmed=true".equals(params[0])){
+//            withArg("oauth_token", params[1].split("=")[1]);
+//            oauthTokenSecret = params[2].split("=")[1];
         }
-        System.out.println("oauthTokenSecret="+oauthTokenSecret);
     }
 
+   public String login(){
+       String startArgs = delParamFromArgsString(argsToString(),"oauth_callback");
+       startArgs = delParamFromArgsString(startArgs,"oauth_verifier");
+       System.out.println(rest_url+"?"+startArgs);
+       return requestGET(rest_url+"?"+startArgs);
+   }
 }
 
 public class FlickrerMain {
@@ -194,37 +210,51 @@ public class FlickrerMain {
         mac.init(keySpec);
 
         BASE64Encoder encoder = new BASE64Encoder();
-        String signature = encoder.encode(mac.doFinal(mess.getBytes("UTF-8"))).trim();
 
-        return signature;
+        return encoder.encode(mac.doFinal(mess.getBytes("UTF-8"))).trim();
     }
+    private static String getAccess(String secret) throws UnsupportedEncodingException, NoSuchAlgorithmException, InvalidKeyException {
+        msg.withArg("oauth_signature", getSignature(secret + msg.oauthTokenSecret));
+        return msg.getRequestTokenForAnAccessToken();
+    }
+
+    private static void getArgs(String secret) throws UnsupportedEncodingException, NoSuchAlgorithmException, InvalidKeyException {
+        msg.withArg("oauth_nonce", "89601180").
+            withArg("oauth_timestamp", String.valueOf(System.currentTimeMillis() / 1000)).
+            withArg("oauth_consumer_key", "4f4643ac9498da767782ad2d86c28a94").
+            withArg("oauth_signature_method", "HMAC-SHA1").
+            withArg("oauth_version", "1.0").
+            withArg("oauth_callback", "oob");
+
+        msg.withArg("oauth_signature", getSignature(secret));
+        msg.getRequestToken();
+        msg.getUserAuthorization();
+        System.out.println("input code");
+        Scanner s = new Scanner(System.in);
+        msg.withArg("oauth_verifier", s.nextLine());
+        writeParams();
+    }
+
     public static void main(String[] args) throws UnsupportedEncodingException, InvalidKeyException, NoSuchAlgorithmException {
         String secret = "7a56cd422aea162b&";
-        msg = new MessageCreator("http://www.flickr.com/services/oauth/request_token");
+        msg = new MessageCreator();
         if(!isAppOAuthInConf()){
-            msg.withArg("oauth_nonce", "89601180").
-                withArg("oauth_timestamp", String.valueOf(System.currentTimeMillis() / 1000)).
-                withArg("oauth_consumer_key", "4f4643ac9498da767782ad2d86c28a94").
-                withArg("oauth_signature_method", "HMAC-SHA1").
-                withArg("oauth_version", "1.0").
-                withArg("oauth_callback", "oob");
-
-            msg.withArg("oauth_signature", getSignature(secret));
-            System.out.println("oauth_signature = " + msg.arguments.get("oauth_signature"));
-
-            System.out.println(msg.getRequestToken());
-            msg.getUserAuthorization();
-            Scanner s = new Scanner(System.in);
-            System.out.println("Input oauth_verifier");
-            msg.withArg("oauth_verifier", s.nextLine());
-            writeParams();
+            getArgs(secret);
 
         }else{
             setArgsFromConf();
         }
-        System.out.println("secret: "+secret+msg.oauthTokenSecret);
-        msg.withArg("oauth_signature", getSignature(secret+msg.oauthTokenSecret));
-        System.out.println("oauth_signature = " + msg.arguments.get("oauth_signature"));
-        msg.getRequestTokenForAnAccessToken();
+        String res = getAccess(secret);
+        System.out.println("result of access = "+res);
+        if ("401".equals(res.trim())) {
+            getArgs(secret);
+            res=getAccess(secret);
+            System.out.println("result of access = " + res);
+        }
+
+        msg.withArg("nojsoncallback", "1").withArg("format", "json").withArg("method", "flickr.test.login");
+        System.out.println(secret+msg.oauthTokenSecret);
+        msg.withArg("oauth_signature", getSignature(secret + msg.oauthTokenSecret));
+        System.out.println("login="+ msg.login());
     }
 }

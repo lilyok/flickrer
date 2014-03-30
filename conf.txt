@@ -1,0 +1,10 @@
+oauth_callback:oob
+oauth_consumer_key:4f4643ac9498da767782ad2d86c28a94
+oauth_nonce:89601180
+oauth_signature:7zP8ZwIIH2h2XxHVpdUh7cBF/pc=
+oauth_signature_method:HMAC-SHA1
+oauth_timestamp:1380931946
+oauth_token:72157636196919026-0340a8dbb165c856
+oauth_verifier:721-264-050
+oauth_version:1.0
+!oauth_token_secret:2754299a3785fb92
